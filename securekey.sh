@@ -32,6 +32,9 @@ dir=.
 # remote directory where the keys are pushed to be loaded
 remotedir="/var/tmp/protected-keys/"
 
+# token for API calls
+auth_token="Basic YWRtaW46YWRtaW4="
+
 # ToDo: Need to ensure that C3D isn't broken by this replacement
 
 for i in "$@"
@@ -108,21 +111,49 @@ then
 
     # Now we have the list of Keys in this Partition which need to be enciphered and put back in
     echo "Enciphering keys with supplied password"
+
+    # create temp dir to put files into on BIG-IP
+    ssh -i $idfile $user@$host "mkdir -p $remotedir"
+
     cd $dir/incoming
-    for unciphered in *; do openssl rsa -$cipher -in $unciphered -out ../protected/{$unciphered}_protected -passout pass:$keyphrase ; done
+    for unciphered in *
+        do 
+            # ToDo: here we _could_ open a file and get the keyphrase from a list that correlates to the key name...
+            echo "Processing $unciphered"
+            openssl rsa -$cipher -in $unciphered -out "../protected/"$unciphered"_protected" -passout pass:$keyphrase
+
+            scp -q -i $idfile "../protected/"$unciphered"_protected" $user@$host:/var/tmp/protected-keys/
+
+            # move the file out of the protected dir to sent
+            mv "../protected/"$unciphered"_protected" ../sent/
+
+            # create the name for the imported key
+            protectedkeyname="$(echo $unciphered | awk ' BEGIN {FS=":"} {print $3}' | awk ' BEGIN {FS="_" } {print $1 }')_protected"
+
+            echo "UKN: $unciphered PKN: $protectedkeyname"
+
+            # import the key
+            payload="{\"command\": \"install\", \"name\": \"$protectedkeyname\", \"security-type\": \"password\", \"from-Local-File\": \"/var/tmp/protected-keys/"$unciphered"_protected\" }"
+            echo "Payload: $payload"
+
+            curl -k -s --location --request POST "https://${host}/mgmt/tm/sys/crypto/key" --header "Authorization: $auth_token" --header "Content-Type: application/json" \
+                                --data-raw $payload
+
+            # ToDo: test if call was successful
+            # curl -s -k --location --request GET 'https://10.1.1.8/mgmt/tm/ltm/profile/client-ssl' --header 'Authorization: Basic YWRtaW46YWRtaW4=' --header 'Cookie: BIGIPAuthUsernameCookie=admin; BIGIPAuthCookie=xy7KB42t7GngozULfocn7s3GfodeVGrcm1crobbo' --data-raw '' | jq -r --arg kname "/Common/schema-server2" '.items[] | if .key == $kname then .name else empty end '
+
+            # for clientprofiles 
+
+        done
 
     cd ..
 
     # push the protected files to the BIG-IP
     # note that you need to put the files where the BIG-IP can reference them
 
-    # create temp dir to put files into on BIG-IP
-    ssh -i $idfile $user@$host "mkdir -p $remotedir"
-
-    scp -q -i $idfile protected/* $user@$host:/var/tmp/protected-keys/
+   
+    # send files via tmsh api
     
-    # send files via tmsh commands in the api
-        
 
 elif [[ $clean -eq YES ]]
 then
