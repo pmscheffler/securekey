@@ -1,0 +1,5 @@
+/incoming/*
+/pre-protected/*
+/protected/*
+/sent/*
+*.key
