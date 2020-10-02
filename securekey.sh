@@ -128,25 +128,57 @@ then
             mv "../protected/"$unciphered"_protected" ../sent/
 
             # create the name for the imported key
-            protectedkeyname="$(echo $unciphered | awk ' BEGIN {FS=":"} {print $3}' | awk ' BEGIN {FS="_" } {print $1 }')_protected"
+            rootname="$(echo $unciphered | awk ' BEGIN {FS=":"} {print $3}' | awk ' BEGIN {FS="_" } {print $1 }')"
+            protectedkeyname="${rootname}_protected"
 
-            echo "UKN: $unciphered PKN: $protectedkeyname"
+            # echo "UKN: $unciphered PKN: $protectedkeyname"
 
             # import the key
-            payload="{\"command\": \"install\", \"name\": \"$protectedkeyname\", \"security-type\": \"password\", \"from-Local-File\": \"/var/tmp/protected-keys/"$unciphered"_protected\" }"
-            echo "Payload: $payload"
+            unciphered_fixed=$(echo "$unciphered" | sed 's/:/\\:/g')
+            # echo "Fixed: $unciphered_fixed"
+            payload="{\"command\": \"install\", \"name\": \""$protectedkeyname"\", \"security-type\": \"password\", \"from-local-file\": \"/var/tmp/protected-keys/"$unciphered"_protected\" }"
+            # echo "Payload: $payload"
 
-            curl -k -s --location --request POST "https://${host}/mgmt/tm/sys/crypto/key" --header "Authorization: $auth_token" --header "Content-Type: application/json" \
-                                --data-raw $payload
+            url="https://${host}/mgmt/tm/sys/crypto/key"
+            auth_header="Authorization: $auth_token"
+            content_type="Content-Type: application/json"
 
-            # ToDo: test if call was successful
-            # curl -s -k --location --request GET 'https://10.1.1.8/mgmt/tm/ltm/profile/client-ssl' --header 'Authorization: Basic YWRtaW46YWRtaW4=' --header 'Cookie: BIGIPAuthUsernameCookie=admin; BIGIPAuthCookie=xy7KB42t7GngozULfocn7s3GfodeVGrcm1crobbo' --data-raw '' | jq -r --arg kname "/Common/schema-server2" '.items[] | if .key == $kname then .name else empty end '
+            # echo \
+            # curl -k --location --request POST $url --header "$header" --header "$content_type" --data-raw "$payload"
+            res=$(curl -sw '%{http_code}' --output /dev/null -k --location --request POST $url --header "$auth_header" --header "$content_type" --data-raw "$payload" )
 
-            # for clientprofiles 
+            # echo "res: $res"
 
+            # FIXED: test if call was successful
+            if [ $res -eq 200 ]
+            then
+                url="https://$host/mgmt/tm/ltm/profile/client-ssl"
+
+                # echo "CP: curl -s -k --location --request GET $url --header "\'$auth_header\'" --data-raw '' | jq -r --arg kname "\"/$partition/$rootname\"" '.items[] | if .key == \$kname then .name else empty end '"
+                # clientprofiles=$(
+                clientprofiles=""
+                content=$(curl -s -k --location --request GET $url --header "$auth_header" --data-raw '')
+                keyname="/$partition/$rootname"
+                # echo "keyname: $keyname"
+
+                clientprofiles=$(echo "${content}" | jq -r --arg keyname "$keyname"  '.items[] | select(.key==$keyname) | .key ' )
+                # echo "Data: $clientprofiles"
+
+                # url="https://$host/mgmt/tm/ltm/profile/server-ssl"
+                # serverprofiles=$(curl -s -k --location --request GET $url --header "$auth_header" --data-raw '' | jq -r --arg kname "{$partition}/{$unciphered}" '.items[] | if .key == $kname then .name else empty end ')
+
+                if [ ! -z "$clientprofiles" ]
+                then
+                    while IFS= read -r clientprofile; do
+                        echo "Updating Client Profile $clientprofile"
+                        
+                    done <<< "$clientprofiles"
+                fi
+                # for clientprofiles 
+            else
+                echo "Failed to install new protected key"
+            fi
         done
-
-    cd ..
 
     # push the protected files to the BIG-IP
     # note that you need to put the files where the BIG-IP can reference them
